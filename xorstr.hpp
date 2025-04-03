@@ -178,8 +178,6 @@ struct Obfuscator<3> {
 template<std::size_t N, int Alg, uint64_t Key>
 struct ObscuredString {
     alignas(32) std::array<char, N> encrypted{};
-    mutable std::string decryptedCache;
-    mutable bool decryptedInitialized = false;
     uint32_t checksum = 0;
 
     constexpr ObscuredString(const char (&str)[N])
@@ -224,12 +222,12 @@ struct ObscuredString {
     }
 
     std::string get() const {
-        if (!decryptedInitialized) {
-            decryptedCache.resize(N);
-            decrypt(&decryptedCache[0]);
-            decryptedInitialized = true;
-        }
-        return decryptedCache;
+        char buffer[N];
+        decrypt(buffer);
+        std::string ret(buffer);
+        secure_memzero(buffer, N);
+        unlock_memory(buffer, N);
+        return ret;
     }
 
     template<typename Func>
