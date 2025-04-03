@@ -49,7 +49,7 @@ void secure_memzero(void* ptr, std::size_t len) {
 #endif
 }
 
-bool lock_memory(void* ptr, std::size_t len) {
+XORSTR_FORCEINLINE bool lock_memory(void* ptr, std::size_t len) {
 #if defined(_MSC_VER)
     return VirtualLock(ptr, len) != 0;
 #else
@@ -189,7 +189,7 @@ struct ObscuredString {
             }(str, Key)), checksum(compute_checksum(encrypted))
     {}
 
-    void decrypt(char* output) const {
+    XORSTR_FORCEINLINE void decrypt(char* output) const {
         if (compute_checksum(encrypted) != checksum) {
             throw std::runtime_error("Data integrity check failed!");
         }
