@@ -216,7 +216,7 @@ struct ObscuredString {
 #endif
         for (std::size_t i = 0; i < N; ++i)
             output[i] = Obfuscator<Alg>::decrypt_char(encrypted[i], i, Key);
-    
+
     lock_and_finish:
         lock_memory(output, N);
     }
@@ -237,6 +237,21 @@ struct ObscuredString {
         func(buffer);
         secure_memzero(buffer, N);
         unlock_memory(buffer, N);
+    }
+
+    bool compare(const std::string_view input) const {
+        if (input.size() != N - 1)
+            return false;
+
+        for (std::size_t i = 0; i < N - 1; ++i) {
+            if (Obfuscator<Alg>::encrypt_char(input[i], i, Key) != encrypted[i])
+                return false;
+        }
+
+        if (Obfuscator<Alg>::encrypt_char('\0', N - 1, Key) != encrypted[N - 1])
+            return false;
+
+        return true;
     }
 };
 
