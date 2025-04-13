@@ -12,7 +12,7 @@
 
 #if defined(_MSC_VER)
     #define FORCE_INLINE __forceinline
-        #include <windows.h>
+    #include <windows.h>
 #else
     #if defined(__GNUC__) || defined(__clang__)
         #define FORCE_INLINE inline __attribute__((always_inline))
@@ -136,8 +136,13 @@ namespace CompileTimeEncryption {
 
             for (std::size_t i = 0; i < N - 1; i++) {
                 uint16_t val = static_cast<uint16_t>(str[i]);
-                uint16_t enc = (val ^ k_byte) + offset + static_cast<uint16_t>(i);
-
+                bool variant_flag = (((k >> (i % 3)) & 1u) != 0);
+                uint16_t enc;
+                if (variant_flag) {
+                    enc = (val ^ k_byte) + offset + static_cast<uint16_t>(i) + 13;
+                } else {
+                    enc = (val ^ k_byte) + offset + static_cast<uint16_t>(i);
+                }
                 out[index++] = static_cast<uint8_t>(enc & 0xFF);
                 out[index++] = static_cast<uint8_t>((enc >> 8) & 0xFF);
             }
@@ -170,7 +175,13 @@ namespace CompileTimeEncryption {
 
             for (std::size_t i = 0; i < s.size(); i++) {
                 uint16_t val = static_cast<uint16_t>(s[i]);
-                uint16_t enc = (val ^ k_byte) + offset + static_cast<uint16_t>(i);
+                bool variant_flag = (((k >> (i % 3)) & 1u) != 0);
+                uint16_t enc;
+                if (variant_flag) {
+                    enc = (val ^ k_byte) + offset + static_cast<uint16_t>(i) + 13;
+                } else {
+                    enc = (val ^ k_byte) + offset + static_cast<uint16_t>(i);
+                }
                 out[index++] = static_cast<uint8_t>(enc & 0xFF);
                 out[index++] = static_cast<uint8_t>((enc >> 8) & 0xFF);
             }
@@ -199,7 +210,13 @@ namespace CompileTimeEncryption {
             for (std::size_t i = 0; i < plain_length; i++) {
                 uint16_t enc = static_cast<uint16_t>(data[index]) | (static_cast<uint16_t>(data[index + 1]) << 8);
                 index += 2;
-                uint16_t val = (enc - offset - static_cast<uint16_t>(i)) ^ k_byte;
+                bool variant_flag = (((k >> (i % 3)) & 1u) != 0);
+                uint16_t val;
+                if (variant_flag) {
+                    val = (enc - offset - static_cast<uint16_t>(i) - 13) ^ k_byte;
+                } else {
+                    val = (enc - offset - static_cast<uint16_t>(i)) ^ k_byte;
+                }
                 result[i] = static_cast<char>(val & 0xFF);
             }
             return result;
