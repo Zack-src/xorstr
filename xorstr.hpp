@@ -62,7 +62,7 @@ namespace StrEncryption {
 #endif
     }
 
-    FORCE_INLINE void lockMemory(void* buf, size_t len) {
+    FORCE_INLINE void lock_mem(void* buf, size_t len) {
 #if defined(_MSC_VER)
         VirtualLock(buf, len);
 #elif defined(__unix__) || defined(__APPLE__)
@@ -70,7 +70,7 @@ namespace StrEncryption {
 #endif
     }
 
-    FORCE_INLINE void unlockMemory(void* buf, size_t len) {
+    FORCE_INLINE void unlock_mem(void* buf, size_t len) {
 #if defined(_MSC_VER)
         VirtualUnlock(buf, len);
 #elif defined(__unix__) || defined(__APPLE__)
@@ -95,8 +95,9 @@ namespace StrEncryption {
         return d == 0;
 #else
         volatile uint8_t d = 0;
-        for (size_t i = 0; i < len; ++i)
+        for (size_t i = 0; i < len; ++i) {
             d |= a[i] ^ b[i];
+        }
         return d == 0;
 #endif
     }
@@ -204,9 +205,12 @@ namespace StrEncryption {
         std::string get() const {
             uint16_t obf_length = static_cast<uint16_t>(data[0]) | (static_cast<uint16_t>(data[1]) << 8);
             uint16_t plain_length = obf_length ^ k_mask;
-            std::string result;
-            result.resize(plain_length);
+
+            std::vector<char> temp_buffer(plain_length);
+            lock_mem(temp_buffer.data(), plain_length);
+
             std::size_t index = 4 + pad_before;
+
             for (std::size_t i = 0; i < plain_length; i++) {
                 uint16_t enc = static_cast<uint16_t>(data[index]) | (static_cast<uint16_t>(data[index + 1]) << 8);
                 index += 2;
@@ -217,8 +221,13 @@ namespace StrEncryption {
                 } else {
                     val = (enc - offset - static_cast<uint16_t>(i)) ^ k_byte;
                 }
-                result[i] = static_cast<char>(val & 0xFF);
+                temp_buffer[i] = static_cast<char>(val & 0xFF);
             }
+
+            std::string result(temp_buffer.data(), plain_length);
+            secure_memzero(temp_buffer.data(), plain_length);
+            unlock_mem(temp_buffer.data(), plain_length);
+
             return result;
         }
 
