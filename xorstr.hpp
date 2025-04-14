@@ -160,6 +160,9 @@ namespace StrEncryption {
 
         std::array<uint8_t, total_size> runtime_encrypt(const std::string & s) const {
             std::array<uint8_t, total_size> out = {};
+
+            lock_mem(out.data(), total_size);
+
             out[0] = data[0];
             out[1] = data[1];
             out[2] = static_cast<uint8_t>(pad_before);
@@ -194,6 +197,9 @@ namespace StrEncryption {
                     out[index++] = static_cast<uint8_t>(seed & 0xFF);
                 }
             }
+
+            unlock_mem(out.data(), total_size);
+
             return out;
         }
 
@@ -233,8 +239,13 @@ namespace StrEncryption {
 
         bool compare(const std::string & s) const {
             auto encrypted_input = runtime_encrypt(s);
+            lock_mem(encrypted_input.data(), total_size);
+
             bool equal = ct_compare(data.data(), encrypted_input.data(), total_size);
+
             secure_memzero(encrypted_input.data(), total_size);
+            unlock_mem(encrypted_input.data(), total_size);
+
             return equal;
         }
     };
