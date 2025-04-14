@@ -23,24 +23,24 @@
 #endif
 
 #if defined(__SSE2__)
-    #include <emmintrin.h>
+#include <emmintrin.h>
 #endif
 
 #ifndef ENCRYPT_SALT
-    #define ENCRYPT_SALT 0xDEADBEEF
+#define ENCRYPT_SALT 0xDEADBEEF
 #endif
 
 #ifndef UNIQUE_KEY
-    #define UNIQUE_KEY __COUNTER__
+#define UNIQUE_KEY __COUNTER__
 #endif
 
-namespace CompileTimeEncryption {
+namespace StrEncryption {
 
     constexpr uint32_t prng(uint32_t seed) {
         return seed * 1664525u + 1013904223u;
     }
 
-    constexpr uint32_t ct_hash(const char* s) {
+    constexpr uint32_t c_hash(const char* s) {
         uint32_t hash = 2166136261u;
         while (*s) {
             hash = (hash ^ static_cast<uint32_t>(*s)) * 16777619u;
@@ -49,7 +49,7 @@ namespace CompileTimeEncryption {
         return hash;
     }
 
-    FORCE_INLINE void secureClear(void* buf, size_t len) {
+    FORCE_INLINE void secure_memzero(void* buf, size_t len) {
 #if defined(_MSC_VER)
         SecureZeroMemory(buf, len);
 #elif defined(__STDC_LIB_EXT1__)
@@ -78,7 +78,7 @@ namespace CompileTimeEncryption {
 #endif
     }
 
-    FORCE_INLINE bool constantTimeCompare(const uint8_t* a, const uint8_t* b, size_t len) {
+    FORCE_INLINE bool ct_compare(const uint8_t* a, const uint8_t* b, size_t len) {
 #if defined(__SSE2__)
         size_t i = 0;
         __m128i diff = _mm_setzero_si128();
@@ -104,7 +104,7 @@ namespace CompileTimeEncryption {
     template <std::size_t N>
     class EncryptedString {
     private:
-        static constexpr uint32_t k = ct_hash(__DATE__) ^ ct_hash(__TIME__) ^ ENCRYPT_SALT ^ UNIQUE_KEY;
+        static constexpr uint32_t k = c_hash(__DATE__) ^ c_hash(__TIME__) ^ ENCRYPT_SALT ^ UNIQUE_KEY;
         static constexpr uint8_t k_byte = static_cast<uint8_t>(k & 0xFF);
         static constexpr uint16_t k_mask = static_cast<uint16_t>(k & 0xFFFF);
 
@@ -224,15 +224,15 @@ namespace CompileTimeEncryption {
 
         bool compare(const std::string & s) const {
             auto encrypted_input = runtime_encrypt(s);
-            bool equal = constantTimeCompare(data.data(), encrypted_input.data(), total_size);
-            secureClear(encrypted_input.data(), total_size);
+            bool equal = ct_compare(data.data(), encrypted_input.data(), total_size);
+            secure_memzero(encrypted_input.data(), total_size);
             return equal;
         }
     };
 
-} // namespace CompileTimeEncryption
+} // namespace StrEncryption
 
-#define XORSTR(str) ([]() consteval { return CompileTimeEncryption::EncryptedString<sizeof(str)>(str); }())
+#define XORSTR(str) ([]() consteval { return StrEncryption::EncryptedString<sizeof(str)>(str); }())
 
 
 #endif // XORSTR_HPP
