@@ -25,8 +25,10 @@
         #define FORCE_INLINE inline
     #endif
 
-    #include <sys/mman.h>
-    #include <unistd.h>
+    #if defined(__unix__) || defined(__APPLE__)
+        #include <sys/mman.h>
+        #include <unistd.h>
+    #endif
 
     #if defined(__STDC_LIB_EXT1__) && (__STDC_WANT_LIB_EXT1__ >= 1)
         #include <string.h>
@@ -40,6 +42,8 @@
 #ifndef ENCRYPT_SALT
     #define ENCRYPT_SALT 0xDEADBEEF
 #endif
+
+#define OBFUSCATION_ADD_CONSTANT 0xABCD
 
 namespace StrEncryption {
 
@@ -63,8 +67,8 @@ namespace StrEncryption {
 #elif defined(__STDC_LIB_EXT1__) && (__STDC_WANT_LIB_EXT1__ >= 1)
         if (memset_s(buf, len, 0, len) != 0) {
             volatile unsigned char* p = static_cast<volatile unsigned char*>(buf);
-            while (len--) { 
-                *p++ = 0; 
+            while (len--) {
+                *p++ = 0;
             }
         }
 #else
@@ -217,11 +221,13 @@ namespace StrEncryption {
             constexpr std::array<uint8_t, 32> final() {
                 buffer[buffer_len++] = 0x80;
                 if (buffer_len > 56) {
-                    while(buffer_len < 64) buffer[buffer_len++] = 0;
+                    while (buffer_len < 64) { buffer[buffer_len++] = 0; }
                     process_block();
                 }
-                while(buffer_len < 56) buffer[buffer_len++] = 0;
-
+                
+                while (buffer_len < 56)
+                    buffer[buffer_len++] = 0;
+                
                 for (int i = 7; i >= 0; --i) {
                     buffer[56 + i] = static_cast<uint8_t>((len >> ((7 - i) * 8)) & 0xFF);
                 }
@@ -245,24 +251,19 @@ namespace StrEncryption {
             return ctx.final();
         }
 
-        inline std::array<uint8_t, 32> calculate(const std::string& s) {
-            Context ctx;
-            ctx.update(reinterpret_cast<const uint8_t*>(s.data()), s.length());
-            return ctx.final();
+        inline std::array<uint8_t, 32> calculate(const std::string& s) { 
+            return calculate(reinterpret_cast<const uint8_t*>(s.data()), s.length()); 
         }
-
-        inline std::array<uint8_t, 32> calculate(const char* s) {
-            size_t len = s ? std::strlen(s) : 0;
-            Context ctx;
-            ctx.update(reinterpret_cast<const uint8_t*>(s), len);
-            return ctx.final();
+        
+        inline std::array<uint8_t, 32> calculate(const char* s) { 
+            size_t len = s ? std::strlen(s) : 0; 
+            return calculate(reinterpret_cast<const uint8_t*>(s), len); 
         }
-    } // namespace Sha256
+    }
 
     namespace HmacSha256 {
         constexpr size_t BLOCK_SIZE = 64;
         constexpr size_t HASH_SIZE = 32;
-
         constexpr std::array<uint8_t, HASH_SIZE> calculate(const uint8_t* key, size_t key_len, const uint8_t* data, size_t data_len)
         {
             std::array<uint8_t, BLOCK_SIZE> k_padded{};
@@ -271,11 +272,12 @@ namespace StrEncryption {
 
             if (key_len > BLOCK_SIZE) {
                 std::array<uint8_t, HASH_SIZE> key_hash = Sha256::calculate(key, key_len);
-                for(size_t i=0; i < HASH_SIZE; ++i) k_padded[i] = key_hash[i];
-            } else {
-                for(size_t i=0; i < key_len; ++i) k_padded[i] = key[i];
+                for (size_t i = 0; i < HASH_SIZE; ++i) k_padded[i] = key_hash[i];
             }
-
+            else {
+                for (size_t i = 0; i < key_len; ++i) k_padded[i] = key[i];
+            }
+            
             for (size_t i = 0; i < BLOCK_SIZE; ++i) {
                 opad_key[i] = k_padded[i] ^ 0x5c;
                 ipad_key[i] = k_padded[i] ^ 0x36;
@@ -291,17 +293,15 @@ namespace StrEncryption {
             outer_ctx.update(inner_hash.data(), HASH_SIZE);
             std::array<uint8_t, HASH_SIZE> final_hmac = outer_ctx.final();
 
-            for(size_t i=0; i<BLOCK_SIZE; ++i) { k_padded[i] = 0; opad_key[i] = 0; ipad_key[i] = 0; }
-            for(size_t i=0; i<HASH_SIZE; ++i) { inner_hash[i] = 0; }
-
             return final_hmac;
         }
-
-        constexpr std::array<uint8_t, HASH_SIZE> calculate(uint32_t key, const uint8_t* data, size_t data_len)
-        {
+        
+        constexpr std::array<uint8_t, HASH_SIZE> calculate(uint32_t key, const uint8_t* data, size_t data_len) {
             std::array<uint8_t, 4> key_bytes = {
-                static_cast<uint8_t>((key >> 24) & 0xFF), static_cast<uint8_t>((key >> 16) & 0xFF),
-                static_cast<uint8_t>((key >> 8) & 0xFF), static_cast<uint8_t>(key & 0xFF)
+                static_cast<uint8_t>((key >> 24) & 0xFF),
+                static_cast<uint8_t>((key >> 16) & 0xFF),
+                static_cast<uint8_t>((key >> 8) & 0xFF),
+                static_cast<uint8_t>(key & 0xFF)
             };
             return calculate(key_bytes.data(), key_bytes.size(), data, data_len);
         }
@@ -320,61 +320,60 @@ namespace StrEncryption {
     template <std::size_t N>
     class EncryptedString {
     private:
+        static constexpr uint32_t PADDING_SEED_BASE = StrEncryption::fnv1a_hash(__DATE__) ^ StrEncryption::fnv1a_hash(__TIME__) ^ ENCRYPT_SALT ^ N;
+        static constexpr std::size_t pad_before_static = (prng(PADDING_SEED_BASE) % 5) + 1;
+        static constexpr std::size_t pad_after_static = (prng(PADDING_SEED_BASE + 1u) % 5) + 1;
 
-        static constexpr uint32_t base_key =
-            fnv1a_hash(__DATE__) ^ fnv1a_hash(__TIME__) ^ ENCRYPT_SALT ^ __COUNTER__;
-
-        static constexpr uint32_t obfuscation_key = base_key ^ 0xAAAAAAAA;
-        static constexpr uint32_t hmac_key = base_key ^ 0x55555555;
-
-        static constexpr uint8_t k_byte = static_cast<uint8_t>(obfuscation_key & 0xFF);
-        static constexpr uint16_t k_mask = static_cast<uint16_t>(obfuscation_key & 0xFFFF);
-        static constexpr std::size_t pad_before = (prng(obfuscation_key) % 5) + 1;
-        static constexpr std::size_t pad_after  = (prng(obfuscation_key + 1u) % 5) + 1;
         static constexpr std::size_t plain_length = N - 1;
         static constexpr std::size_t encrypted_core_length = plain_length * 2;
-        static constexpr std::size_t encrypted_data_size = 4 + pad_before + encrypted_core_length + pad_after;
+        static constexpr std::size_t encrypted_data_size = 4 + pad_before_static + encrypted_core_length + pad_after_static;
 
-        static constexpr size_t HASH_SIZE = HmacSha256::HASH_SIZE;
+        const uint32_t instance_obfuscation_key_rt;
+        const uint32_t instance_hmac_key_rt;
 
         std::array<uint8_t, encrypted_data_size> encrypted_data;
-        std::array<uint8_t, HASH_SIZE> stored_hmac;
+        std::array<uint8_t, HmacSha256::HASH_SIZE> stored_hmac;
 
-
-        static consteval std::array<uint8_t, encrypted_data_size> encrypt(const char (&str)[N]) {
+        static consteval std::array<uint8_t, encrypted_data_size> encrypt_impl(
+            const char(&str)[N],
+            uint32_t current_obfuscation_key,
+            uint8_t current_k_byte,
+            uint16_t current_k_mask)
+        {
             if (N == 0) throw std::runtime_error("Cannot encrypt an empty literal.");
 
             std::array<uint8_t, encrypted_data_size> out = {};
             std::size_t index = 0;
 
-            uint16_t obf_length = static_cast<uint16_t>(plain_length) ^ k_mask;
+            uint16_t obf_length = static_cast<uint16_t>(plain_length) ^ current_k_mask;
             out[index++] = static_cast<uint8_t>(obf_length & 0xFF);
             out[index++] = static_cast<uint8_t>((obf_length >> 8) & 0xFF);
-            out[index++] = static_cast<uint8_t>(pad_before);
-            out[index++] = static_cast<uint8_t>(pad_after);
 
-            uint32_t seed1 = obfuscation_key;
-            for (std::size_t i = 0; i < pad_before; i++) {
+            out[index++] = static_cast<uint8_t>(pad_before_static);
+            out[index++] = static_cast<uint8_t>(pad_after_static);
+
+            uint32_t seed1 = current_obfuscation_key;
+            for (std::size_t i = 0; i < pad_before_static; i++) {
                 seed1 = prng(seed1);
                 out[index++] = static_cast<uint8_t>(seed1 & 0xFF);
             }
 
+            // Encrypt core data
             for (std::size_t i = 0; i < plain_length; i++) {
                 uint16_t val = static_cast<uint16_t>(static_cast<uint8_t>(str[i]));
+                bool use_variant = (((current_obfuscation_key >> (i % 32)) & 1u) != 0);
 
-                bool use_variant = (((obfuscation_key >> (i % 32)) & 1u) != 0);
-
-                uint16_t encrypted_val = (val ^ k_byte) + 0xABCD + static_cast<uint16_t>(i);
+                uint16_t encrypted_val = (val ^ current_k_byte) + OBFUSCATION_ADD_CONSTANT + static_cast<uint16_t>(i);
                 if (use_variant) {
-                    encrypted_val += 0xABCD;
+                    encrypted_val += OBFUSCATION_ADD_CONSTANT;
                 }
 
                 out[index++] = static_cast<uint8_t>(encrypted_val & 0xFF);
                 out[index++] = static_cast<uint8_t>((encrypted_val >> 8) & 0xFF);
             }
 
-            uint32_t seed2 = obfuscation_key + 1u;
-            for (std::size_t i = 0; i < pad_after; i++) {
+            uint32_t seed2 = current_obfuscation_key + 1u;
+            for (std::size_t i = 0; i < pad_after_static; i++) {
                 seed2 = prng(seed2);
                 out[index++] = static_cast<uint8_t>(seed2 & 0xFF);
             }
@@ -382,50 +381,70 @@ namespace StrEncryption {
             if (index != encrypted_data_size) {
                 throw std::runtime_error("Internal error: Encrypt size mismatch during compile time");
             }
-
             return out;
         }
 
-        static consteval std::array<uint8_t, HASH_SIZE> compute_hmac(const char (&str)[N]) {
-            if (N == 0) throw std::runtime_error("Cannot compute HMAC for empty literal");
-
-            std::array<uint8_t, N - 1> str_bytes{};
-            for (size_t i = 0; i < N - 1; ++i) {
-                str_bytes[i] = static_cast<uint8_t>(str[i]);
+        static consteval std::array<uint8_t, HmacSha256::HASH_SIZE> compute_hmac_impl(
+            const char(&str)[N],
+            uint32_t current_hmac_key)
+        {
+            if (N == 0) {
+                throw std::runtime_error("Cannot compute HMAC for empty literal.");
             }
 
-            return HmacSha256::calculate(hmac_key, str_bytes.data(), N - 1);
+            if (plain_length == 0) {
+                std::array<uint8_t, 1> dummy_data_for_empty_string{};
+                return HmacSha256::calculate(current_hmac_key, dummy_data_for_empty_string.data(), 0);
+            }
+            else {
+                std::array<uint8_t, plain_length> str_bytes{};
+                for (size_t i = 0; i < plain_length; ++i) {
+                    str_bytes[i] = static_cast<uint8_t>(str[i]);
+                }
+                return HmacSha256::calculate(current_hmac_key, str_bytes.data(), plain_length);
+            }
         }
 
         FORCE_INLINE char decrypt_char_at(std::size_t i) const {
+            const uint8_t current_k_byte_rt = static_cast<uint8_t>(this->instance_obfuscation_key_rt & 0xFF);
 
-            size_t current_pad_before = static_cast<size_t>(encrypted_data[2]);
-            size_t data_index = 4 + current_pad_before + (i * 2);
+            size_t actual_pad_before = static_cast<size_t>(this->encrypted_data[2]);
+            size_t data_index = 4 + actual_pad_before + (i * 2);
 
-            if (data_index + 1 >= encrypted_data_size) {
+            if (data_index + 1 >= this->encrypted_data.size()) {
                 throw std::out_of_range("Internal error: Decrypt index out of bounds");
             }
 
-            uint16_t encrypted_val = static_cast<uint16_t>(encrypted_data[data_index]) |
-                (static_cast<uint16_t>(encrypted_data[data_index + 1]) << 8);
+            uint16_t encrypted_val = static_cast<uint16_t>(this->encrypted_data[data_index]) |
+                (static_cast<uint16_t>(this->encrypted_data[data_index + 1]) << 8);
 
-            bool use_variant = (((obfuscation_key >> (i % 32)) & 1u) != 0);
+            bool use_variant = (((this->instance_obfuscation_key_rt >> (i % 32)) & 1u) != 0);
 
             uint16_t temp_val = encrypted_val;
             if (use_variant) {
-                temp_val -= 13;
+                temp_val -= OBFUSCATION_ADD_CONSTANT;
             }
-            temp_val = temp_val - 0xABCD - static_cast<uint16_t>(i);
-            uint16_t original_val = temp_val ^ k_byte;
+            temp_val = temp_val - OBFUSCATION_ADD_CONSTANT - static_cast<uint16_t>(i);
+            uint16_t original_val = temp_val ^ current_k_byte_rt;
 
             return static_cast<char>(original_val & 0xFF);
         }
 
     public:
-
-        consteval EncryptedString(const char (&str)[N])
-            : encrypted_data(encrypt(str)), stored_hmac(compute_hmac(str))
-        {}
+        consteval EncryptedString(const char(&str)[N], uint32_t instance_key_seed)
+            : instance_obfuscation_key_rt(
+                ((StrEncryption::fnv1a_hash(__DATE__) ^ StrEncryption::fnv1a_hash(__TIME__) ^ ENCRYPT_SALT^ instance_key_seed) ^ 0xAAAAAAAAU)
+            ),
+            instance_hmac_key_rt(
+                ((StrEncryption::fnv1a_hash(__DATE__) ^ StrEncryption::fnv1a_hash(__TIME__) ^ ENCRYPT_SALT^ instance_key_seed) ^ 0x55555555U)
+            ),
+            encrypted_data(encrypt_impl(str,
+                instance_obfuscation_key_rt,
+                static_cast<uint8_t>(instance_obfuscation_key_rt & 0xFF),
+                static_cast<uint16_t>(instance_obfuscation_key_rt & 0xFFFF)
+            )),
+            stored_hmac(compute_hmac_impl(str, instance_hmac_key_rt))
+        {  }
 
         EncryptedString(const EncryptedString&) = delete;
         EncryptedString(EncryptedString&&) = delete;
@@ -433,62 +452,66 @@ namespace StrEncryption {
         EncryptedString& operator=(EncryptedString&&) = delete;
 
         std::string get() const {
-            uint16_t obf_length = static_cast<uint16_t>(encrypted_data[0]) | (static_cast<uint16_t>(encrypted_data[1]) << 8);
-            size_t current_pad_before = static_cast<size_t>(encrypted_data[2]);
-            size_t current_pad_after = static_cast<size_t>(encrypted_data[3]);
+            const uint16_t current_k_mask_rt = static_cast<uint16_t>(this->instance_obfuscation_key_rt & 0xFFFF);
 
-            uint16_t current_plain_length = obf_length ^ k_mask;
+            uint16_t obf_length_from_data = static_cast<uint16_t>(this->encrypted_data[0]) | (static_cast<uint16_t>(this->encrypted_data[1]) << 8);
+            size_t actual_pad_before_from_data = static_cast<size_t>(this->encrypted_data[2]);
+            size_t actual_pad_after_from_data = static_cast<size_t>(this->encrypted_data[3]);
 
-            size_t expected_data_size = 4 + current_pad_before + (current_plain_length * 2) + current_pad_after;
-            if (expected_data_size != encrypted_data_size || current_plain_length != plain_length) {
+            uint16_t current_decrypted_plain_length = obf_length_from_data ^ current_k_mask_rt;
 
-                throw std::runtime_error("Data integrity error: Length mismatch detected during decryption");
+            if (current_decrypted_plain_length != plain_length) {
+                throw std::runtime_error("Data integrity error: Plain length mismatch during decryption.");
             }
-            if (current_plain_length == 0) {
+
+            size_t expected_data_size_from_stored_pads = 4 + actual_pad_before_from_data + (current_decrypted_plain_length * 2) + actual_pad_after_from_data;
+            if (expected_data_size_from_stored_pads != encrypted_data_size) {
+                throw std::runtime_error("Data integrity error: Total size mismatch based on stored pads.");
+            }
+
+            if (actual_pad_before_from_data != pad_before_static || actual_pad_after_from_data != pad_after_static) {
+                throw std::runtime_error("Data integrity error: Stored padding markers mismatch static padding configuration.");
+            }
+
+            if (current_decrypted_plain_length == 0) {
                 return "";
             }
 
-            std::vector<char> temp_buffer(current_plain_length);
-
-            bool locked = lock_mem(temp_buffer.data(), current_plain_length);
+            std::vector<char> temp_buffer(current_decrypted_plain_length);
+            bool locked = lock_mem(temp_buffer.data(), current_decrypted_plain_length);
 
             try {
-                for (std::size_t i = 0; i < current_plain_length; ++i) {
+                for (std::size_t i = 0; i < current_decrypted_plain_length; ++i) {
                     temp_buffer[i] = decrypt_char_at(i);
                 }
-            } catch (...) {
-                secure_memzero(temp_buffer.data(), current_plain_length);
-                if (locked) { unlock_mem(temp_buffer.data(), current_plain_length); }
+            }
+            catch (...) {
+                secure_memzero(temp_buffer.data(), current_decrypted_plain_length);
+                if (locked) { unlock_mem(temp_buffer.data(), current_decrypted_plain_length); }
                 throw;
             }
 
-            std::string result(temp_buffer.data(), current_plain_length);
+            std::string result(temp_buffer.data(), current_decrypted_plain_length);
 
-            secure_memzero(temp_buffer.data(), current_plain_length);
-            if (locked) { unlock_mem(temp_buffer.data(), current_plain_length); }
+            secure_memzero(temp_buffer.data(), current_decrypted_plain_length);
+            if (locked) { unlock_mem(temp_buffer.data(), current_decrypted_plain_length); }
 
             return result;
         }
 
         bool compare(const std::string& s) const {
-            std::array<uint8_t, HASH_SIZE> input_hmac = HmacSha256::calculate(hmac_key, s);
-
-            bool result = ct_compare(input_hmac.data(), stored_hmac.data(), HASH_SIZE);
-
-            secure_memzero(input_hmac.data(), HASH_SIZE);
-
+            std::array<uint8_t, HmacSha256::HASH_SIZE> input_hmac = HmacSha256::calculate(this->instance_hmac_key_rt, s);
+            bool result = ct_compare(input_hmac.data(), this->stored_hmac.data(), HmacSha256::HASH_SIZE);
+            secure_memzero(input_hmac.data(), HmacSha256::HASH_SIZE);
             return result;
         }
 
         bool compare(const char* s) const {
             if (!s) { return false; }
 
-            std::array<uint8_t, HASH_SIZE> input_hmac = HmacSha256::calculate(hmac_key, s);
-
-            bool result = ct_compare(input_hmac.data(), stored_hmac.data(), HASH_SIZE);
-
-            secure_memzero(input_hmac.data(), HASH_SIZE);
-
+            std::array<uint8_t, HmacSha256::HASH_SIZE> input_hmac = HmacSha256::calculate(this->instance_hmac_key_rt, s);
+            bool result = ct_compare(input_hmac.data(), this->stored_hmac.data(), HmacSha256::HASH_SIZE);
+            secure_memzero(input_hmac.data(), HmacSha256::HASH_SIZE);
             return result;
         }
 
@@ -501,6 +524,12 @@ namespace StrEncryption {
 
 } // namespace StrEncryption
 
-#define XORSTR(str) ([]() consteval { return StrEncryption::EncryptedString<sizeof(str)>(str); }())
+#define XORSTR(str) ([]() consteval { \
+    constexpr uint32_t instance_key_seed = StrEncryption::fnv1a_hash(__TIME__) ^ \
+                                           StrEncryption::fnv1a_hash(__FILE__) ^ \
+                                           static_cast<uint32_t>(__LINE__) ^ \
+                                           static_cast<uint32_t>(__COUNTER__); \
+    return StrEncryption::EncryptedString<sizeof(str)>(str, instance_key_seed); \
+}())
 
 #endif // XORSTR_HPP
